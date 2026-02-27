@@ -11,7 +11,10 @@ export default function Home() {
       </h1>
       
       <p className="text-lg md:text-xl text-gray-600 dark:text-gray-400 mb-10 max-w-2xl leading-relaxed">
-        Bienvenido a mi espacio personal. Aquí documento mi aprendizaje continuo, comparto mis write-ups de máquinas de HackTheBox y expongo mis proyectos técnicos orientados al Pentesting y la seguridad defensiva.
+          Especialista en Ciberseguridad con ADN de sistemas e infraestructura. Mi paso por
+          BBVA Technology gestionando activos críticos me ha dado una visión pragmática: la
+          seguridad no es solo encontrar vulnerabilidades, sino entender el impacto real en el
+          negocio y garantizar la continuidad operativa.      
       </p>
 
       <div className="flex flex-wrap gap-4">

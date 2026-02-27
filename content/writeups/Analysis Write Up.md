@@ -1,5 +1,6 @@
 --- 
-title: "Analysis" 
+title: "Analysis"
+platform: "Hackthebox" 
 date: "2026-02-27" 
 difficulty: "Hard" 
 os: "Windows" 

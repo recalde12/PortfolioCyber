@@ -2,10 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import matter from 'gray-matter';
 
-// Le indicamos dónde están nuestros archivos .md
 const writeupsDirectory = path.join(process.cwd(), 'content/writeups');
 
-// Función 1: Obtiene TODOS los write-ups para la lista principal
 export function getAllWriteups() {
   const fileNames = fs.readdirSync(writeupsDirectory);
 
@@ -17,8 +15,8 @@ export function getAllWriteups() {
 
     return {
       slug,
-      // SALVAVIDAS: Si no hay título en el .md, usamos el nombre del archivo
-      title: data.title || slug, 
+      title: data.title || slug,
+      platform: data.platform || 'HackTheBox', // Valor por defecto si olvidas ponerlo
       date: data.date || 'Sin fecha',
       description: data.description || 'Sin descripción.',
       difficulty: data.difficulty || 'Desconocida',
@@ -27,20 +25,15 @@ export function getAllWriteups() {
     };
   });
 
-  // Los ordenamos por fecha (del más nuevo al más antiguo)
   return allWriteups.sort((a, b) => (a.date < b.date ? 1 : -1));
 }
 
-// Función 2: Obtiene UN SOLO write-up para leerlo por completo
 export function getWriteupBySlug(slug: string) {
   const decodedSlug = decodeURIComponent(slug); 
-  
   const fullPath = path.join(writeupsDirectory, `${decodedSlug}.md`);
   const fileContents = fs.readFileSync(fullPath, 'utf8');
-
   const { data, content } = matter(fileContents);
 
-  // 🪄 MAGIA PARA OBSIDIAN: 
   const contentWithFixedImages = content.replace(
     /!\[\[(.*?)\]\]/g, 
     (match, imageName) => {
@@ -52,8 +45,8 @@ export function getWriteupBySlug(slug: string) {
   return {
     slug,
     content: contentWithFixedImages,
-    // SALVAVIDAS: Si no hay título en el .md, usamos el nombre del archivo
     title: data.title || decodedSlug,
+    platform: data.platform || 'HackTheBox',
     date: data.date || 'Sin fecha',
     description: data.description || '',
     difficulty: data.difficulty || 'Desconocida',
