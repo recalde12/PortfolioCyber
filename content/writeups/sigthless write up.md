@@ -10,69 +10,75 @@ description: "Resolución de la máquina Analysis de HackTheBox."
 
 ------------
 
-Lo primero que hacemos como siempre es realizar un escaneo de puertos: 
+Sigless es una máquina de dificultad media que requiere una enumeración precisa de servicios web y subdominios. La explotación inicial se basa en una vulnerabilidad de RCE en SQLPad, seguida de un análisis de tráfico local mediante Remote Debugging para capturar credenciales de administrador. La escalada de privilegios final se realiza abusando de las funciones de actualización de PHP en el panel Froxlor.
+
+1. Fase de Reconocimiento y Enumeración
+Iniciamos con el escaneo de puertos para identificar los servicios activos:
 
 ![[Pasted image 20240930154132.png]]
 
-Metemos el dominio que nos sale del puerto 80 en el /etc/host, y exploramos la web: 
+Identificamos un servidor web en el puerto 80. Tras añadir el dominio principal al archivo /etc/hosts, exploramos la web y descubrimos un nuevo dominio relacionado con la infraestructura:
 
 ![[Pasted image 20240930172544.png]]
-
-explorándola hemos encontrado otro dominio que hemos añadido al /etc/host: 
-
 ![[Pasted image 20240930172651.png]]
 
-Por lo que vamos a buscar mas subdominios y a analizar este que hemos encontrado: 
+Enumeración de Subdominios y SQLPad
+Realizamos un fuzzing de subdominios y localizamos una instancia de SQLPad, una herramienta de visualización y edición de SQL. Al analizar las acciones disponibles, identificamos usuarios válidos en el sistema.
 
 ![[Pasted image 20240930172843.png]]
-
-Encontramos dos users analizando las diferentes acciones que podemos realizar en sqlpad:
 ![[Pasted image 20240930175554.png]]
 
-Buscando posibles vulnerabilidades encontradas en sqlpad montados, encontramos el siguiente: 
-https://github.com/0xRoqeeb/sqlpad-rce-exploit-CVE-2022-0944
-
-Por lo que probamos haber si funciona:
+2. Explotación: RCE en SQLPad (CVE-2022-0944)
+Investigamos vulnerabilidades conocidas para SQLPad y localizamos un exploit de Ejecución Remota de Comandos (RCE). Esta vulnerabilidad permite inyectar comandos a través de las plantillas de conexión de bases de datos.
 
 ![[Pasted image 20240930175744.png]]
-![[Pasted image 20240930175814.png]]Y recibimos la conexión por lo que parece estamos en un contenedor de docker, vemos los hashes de la contraseña de michael: 
+![[Pasted image 20240930175814.png]]
+
+Al ejecutar el exploit, obtenemos una reverse shell inicial. Tras enumerar el entorno, confirmamos que nos encontramos dentro de un contenedor Docker. Localizamos y extraemos el hash de la contraseña del usuario michael.
+
+Movimiento Lateral a SSH
+Utilizamos John the Ripper para crackear el hash obtenido y logramos la contraseña de michael, lo que nos permite autenticarnos vía SSH en el sistema host:
+
 ![[Pasted image 20240930182142.png]]
-
-Crackeamos el hash de michael: 
 ![[Pasted image 20240930183004.png]]
-y tratamos de conectarnos por ssh: 
-
 ![[Pasted image 20240930183111.png]]
 
-Una vez conectados con michael, vemos que tiene varios puertos abiertos de manera local:
-![[Pasted image 20241001004928.png]]Como nos podemos conectar por ssh, hacemos port forwarding con este, y probamos uno a uno haber que es lo que hay montado por detras de estos puertos, en el  34839 vemos una secuencia que se repite en el que el admin se conecta, al panel de login que hay por el puerto 8080 montado: 
+3. Post-Explotación: Remote Debugging y Captura de Credenciales
+Una vez en el host, identificamos varios servicios corriendo en puertos locales (localhost). Realizamos un SSH Port Forwarding para inspeccionarlos desde nuestro navegador. Detectamos un proceso automatizado en el puerto 34839 donde el administrador interactúa con un panel de Froxlor en el puerto 8080.
 
-![[Pasted image 20241001005127.png]]![[Pasted image 20241001005141.png]]
-![[Pasted image 20241001005323.png]] 
+![[Pasted image 20241001004928.png]]
+![[Pasted image 20241001005127.png]]
+![[Pasted image 20241001005141.png]]
 
-Para poder escuchar y debbuguear la web de el puerto 34839, a parte de hacer el port forwarding tenemos que añadir en chrome un remote debbuging, en la siguiente ruta de chrome:
+Uso de Chrome Remote Debugging
+Para interceptar esta interacción, utilizamos la función de Remote Debugging de Chrome. Al conectar con el puerto redireccionado, podemos inspeccionar la sesión del administrador en tiempo real. En la pestaña de red, capturamos el payload de login que contiene el usuario y la contraseña en texto claro.
+
 ![[Pasted image 20241001005446.png]]
-Cuando la conexion a funcionado con este puerto se nos ha abierto la ventana de target y cuando le hemos dado a inspect nos lleva a la siguiente ventana: 
-
-![[Pasted image 20241001005535.png]] 
-En ese index podremos ver en la parte del payload que manda el admin el usuario y la contraseña en texto claro por lo que ahora podremos conectarnos al panel de login de froxlor:
-
+![[Pasted image 20241001005535.png]]
 ![[Pasted image 20241001005700.png]]
 
-Ahora para escalar privilegios vemos en php que se pueden generar nuevas versiones de php para poder actualizarlo: 
+4. Escalada de Privilegios: Abuso de Froxlor y PHP Opcache
+Con las credenciales de administrador, accedemos al panel de Froxlor. Identificamos una funcionalidad que permite generar y actualizar versiones de PHP mediante comandos personalizados.
+
 ![[Pasted image 20241001010705.png]]
 
-Intentamos generar una nueva:
+Secuestro de comandos de actualización
+Explotamos esta función inyectando comandos maliciosos en la cadena de ejecución. Realizamos el ataque en dos pasos:
+
+Inyectamos un comando para copiar la flag de root a la carpeta /tmp: cp /root/root.txt /tmp/root.txt.
+
+Inyectamos un segundo comando para cambiar los permisos y hacerla legible: chmod 644 /tmp/root.txt.
+
 ![[Pasted image 20241001010737.png]]
+![[Pasted image 20240930183004.png]]
 
-Vamos a jugar con ese comando para decirle primero que nos ejecute el siguiente comando: 
-cp /root/root.txt, una vez este en la ruta /tmp la flag de root no vamos a tener permisos para leerla por lo que eliminamos la version que hemos creado y creamos otra con el comando chmod 644 /tmp/root.txt:
-![[Pasted image 20241001010912.png]]
+Para forzar la ejecución de estos comandos, accedemos al apartado de opcacheinfo, lo que reinicia el servicio y procesa nuestra configuración maliciosa.
 
-Para que se ejecuten tenemos que ir al apartado opcacheinfo:
 ![[Pasted image 20241001010956.png]]
-Una vez reiniciemos se ejecutara el comando esto hay que hacerlo para ambas acciones tanto para la copia como para dar los permisos:
 ![[Pasted image 20241001011103.png]]
 
+Finalmente, accedemos a la ruta /tmp para leer la flag de root directamente.
 
 ![[Pasted image 20241001010554.png]]
+
+Máquina Sigless comprometida. 🚀

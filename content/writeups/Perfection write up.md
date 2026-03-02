@@ -9,49 +9,63 @@ description: "Resolución de la máquina Analysis de HackTheBox."
 #easy #linux #STTI
 
 ------------
-![[Pasted image 20240304005141.png]]
-Vemos la version del sistema operativo que corre por detras:
-![[Pasted image 20240304005253.png]]
+Perfection es una máquina Linux de dificultad fácil que pone a prueba la capacidad de identificar filtros de entrada incompletos. La intrusión se logra mediante una Inyección de Plantillas en el Lado del Servidor (SSTI) en el motor Ruby, evadiendo una lista negra mediante caracteres de nueva línea. La escalada de privilegios implica el análisis de bases de datos locales y un ataque de fuerza bruta basado en reglas específicas.
 
-Aplicamos un whatweb al puerto 80 de la pagina:
+1. Fase de Reconocimiento y Enumeración
+Iniciamos con un escaneo de puertos para identificar los servicios activos:
+
+![[Pasted image 20240304005141.png]]
+
+Identificamos un servidor web en el puerto 80. Analizamos las tecnologías subyacentes con whatweb:
 
 ![[Pasted image 20240304012510.png]]
 
-Revisamos la pagina, y parece que tenemos una parte en la que nos hace la media de unos parametros que le metemos:
-![[Pasted image 20240304021225.png]]
->He intentado inyectar etiquetas html pero me reporta el mensaje malicious input blocked.
+Exploramos la aplicación web, la cual presenta una funcionalidad para calcular promedios de parámetros ingresados por el usuario. Al intentar inyectar etiquetas HTML básicas, el sistema responde con un mensaje de "malicious input blocked", confirmando la presencia de un filtro de seguridad.
 
-Por lo que vemos es la unica via explotable en la maquina por lo que vamos a probar a fuzzear por los caracteres especiales utilizando burp.
-Lo primero que hemos hecho a sido interceptar la petición del sistema y a partir de aquí con el intruder hemos hecho un ataque de tipo snipper en uno de los campos de category y hemos utilizado seclists y un diccionario de caracteres especiales:
-![[Pasted image 20240304135845.png]]Vemos que el único que devuelve un código de estado diferente es el % y que una nueva linea nos deja ejecutarla sin que nos de un error:
+![[Pasted image 20240304021225.png]]
+
+2. Explotación Web: Evasión de Filtro y SSTI
+Fuzzing de Caracteres Especiales
+Utilizamos el Intruder de Burp Suite con diccionarios de Seclists para identificar qué caracteres logran evadir el filtro. Descubrimos que el carácter de nueva línea (%0A) es aceptado y permite que el sistema procese contenido adicional después del input legítimo.
+
+![[Pasted image 20240304135845.png]]
 ![[Pasted image 20240304145238.png]]
 
-Sabiendo esto ahora debemos intentar ejecutar un salto de linea para poder inyectar un payload, nos encontramos con una vuln llamada STTI, en la que nos aprovechamos del funcionamiento de la plantilla de la web, consiguiendo saltarnos la blacklist de caracteres especiales a partir de aquí es donde vamos a intentar inyectar el comando para conseguir RCE, para saltarnos la blacklist detrás del nombre de la categoría vamos a inyectar %0A, esto es como si fuera una nueva linea con esto nos estamos saltando el filtro seguido de esto inyectamos el código que nos permite ejecutarnos una reverse shell:
+Inyección de Plantillas (SSTI) a RCE
+Al confirmar que la web utiliza Ruby, probamos un payload de SSTI para el motor ERB. Al concatenar %0A seguido de una expresión matemática como <%= 7*7 %>, el servidor devuelve el resultado, confirmando la vulnerabilidad.
+
+Para obtener una Reverse Shell, debemos evadir posibles restricciones de caracteres en el comando. Generamos el payload en Bash, lo codificamos en Base64 y lo inyectamos utilizando la función de decodificación de Ruby para asegurar una ejecución limpia:
+
 ![[Pasted image 20240304161159.png]]
-detrás de esto inyectamos el código malicioso que nos ejecutara el comando que le inyectemos:
-https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Server%20Side%20Template%20Injection/README.md
-![[Pasted image 20240304161318.png]]
-Si inyectamos la reverse directamente sin pasarlo a base64 nos dará un error y no nos establecerá la reverse por lo que hay que pasar la reverse a base64 y en la inyección decodearlo otra vez.
-Creando la reverse en base64:
 ![[Pasted image 20240304161740.png]]
-Ahora pegamos este comando en base64 en el código que queremos inyectar y urlencodeamos este base64 para que no nos de errores:
-![[Pasted image 20240304162242.png]]
-Lo dicho le añadimos el base64 -d | bash, para decodearlo de base64 y que se ejecute la reverse, por lo que nos ponemos en escucha y mandamos la petición, nos llegara una shell por el puerto que le hayamos indicado:
+
+Inyectamos el payload final urlencodeado y recibimos la conexión en nuestro listener:
 ![[Pasted image 20240304162213.png]]
-Ahora es el momento de escalar privilegios, investigando el sistema hemos encontrado un hash en un archivo llamado pupilpath_credentials.db:
+
+3. Post-Explotación y Análisis de Datos
+Tras estabilizar la shell, enumeramos el sistema y localizamos una base de datos SQLite llamada pupilpath_credentials.db. Al consultarla, extraemos el hash de la contraseña de la usuaria Susan.
+
 ![[Pasted image 20240304163632.png]]
 
-Y podemos crackearlo ya que nos sabemos el patrón gracias a un mail que hemos encontrado en la ruta /var/mail/susan:
+Análisis de Patrones y Craqueo
+Encontramos un correo electrónico en /var/mail/susan que describe el formato de las contraseñas del sistema: una combinación de nombre, nombre invertido y una secuencia numérica de 9 dígitos.
+
 ![[Pasted image 20240304163430.png]]
-Con hashcat crackeamos la contraseña sabiendo el patron:
+
+Utilizamos Hashcat con una máscara personalizada (?d?d?d?d?d?d?d?d?d) para realizar un ataque de fuerza bruta sobre el hash, respetando el patrón susan_nasus_XXXXXXXXX:
+
 ![[Pasted image 20240304171101.png]]
-La mascara que le metemos es por que tenemos que probar 1.000.000.000 de digitos, por lo que le metemos tantas d? como 0 tiene.
-La contraseña es: susan_nasus_413759210
-Por lo que ahora nos podemos conectar por ssh:
-![[Pasted image 20240304171255.png]]
-Ahora sabiendo la contraseña podemos ver los permisos con sudo:
+
+La contraseña obtenida es: susan_nasus_413759210.
+
+4. Escalada de Privilegios
+Con las credenciales de Susan, validamos sus privilegios de sudo. Observamos que tiene permisos para ejecutar cualquier comando como root.
+
 ![[Pasted image 20240304171336.png]]
-Vemos que ahora sabiendo la contraseña podemos ejecutar cualquier comando con privs de admin.
-Por lo que vamos a convertirnos en root:
+
+Simplemente ejecutamos sudo su o invocamos una shell privilegiada para obtener el control total del sistema y capturar la flag final.
+
 ![[Pasted image 20240304171444.png]]
 ![[Pasted image 20240304171012.png]]
+
+Máquina Perfection comprometida. 🚀

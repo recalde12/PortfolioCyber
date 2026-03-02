@@ -10,84 +10,86 @@ description: "Resolución de la máquina Analysis de HackTheBox."
 #linux #insane
 
 --------
-Lo primero que hacemos es el escaneo de puertos abiertos:
+Skyfall es una máquina de dificultad difícil que requiere un dominio profundo de infraestructuras en la nube y herramientas de gestión de secretos. La intrusión comienza con un bypass de restricciones mediante caracteres de nueva línea, seguido de la explotación de una vulnerabilidad de divulgación de información en MinIO. La post-explotación y escalada implican el uso de HashiCorp Vault para generar credenciales SSH temporales y el análisis de procesos con privilegios de root para el secuestro de tokens maestros.
+
+1. Fase de Reconocimiento y Enumeración
+Iniciamos con un escaneo de puertos para identificar los servicios activos y sus versiones:
+
 ![[Pasted image 20240204174208.png]]
-Vemos la versión y el servicio que corren:
 ![[Pasted image 20240204174239.png]]
-Vemos el launchpad:
+
+Identificamos servicios estándar de SSH y HTTP. Analizando el banner de SSH en Launchpad, confirmamos la distribución del sistema operativo y posibles vulnerabilidades de kernel para fases posteriores.
+
 ![[Pasted image 20240204174303.png]]
-Vemos que la versión del sistema operativo tiene dos posibles vulnerabilidades para luego intentar escalar privilegios.
 
-Metemos en el /etc/hosts el dominio con la ip correspondiente y hacemos un whatweb:
+Enumeración Web y Acceso a la Demo
+Configuramos el dominio skyfall.htb en nuestro /etc/hosts. Mediante whatweb, identificamos correos electrónicos expuestos y un subdominio para una instancia de demostración: demo.skyfall.htb.
+
 ![[Pasted image 20240204174641.png]]
-Vemos que nos saca 3 correos que deben de estar en la web, vamos a explorarla:
-![[Pasted image 20240204174724.png]]
-Vemos una demos que nos dejan probar, pero tenemos que meter el subdominio primero:
 ![[Pasted image 20240204174930.png]]
-entramos a la demo y vemos un panel de login al que podemos acceder con la contraseña y el usuario guest:guest:
-![[Pasted image 20240204175018.png]]
-vamos hacer un dirsearch de estos dos dominios que  tenemos:
-![[Pasted image 20240204180158.png]]
-En demo tampoco nos encuentra nada vamos a tratar de ver que podemos hacer en la demo que nos ofrecen.
-Investigando la web demos que nos ofrecen, en un apartado donde no nos dejaba acceder por permisos y nos daba un 403 forbidden, podemos bypassearlo con '%0A', por lo que vemos información que no deberíamos,  por ejemplo el siguiente endpoint de la API MinIO:
+
+Accedemos al panel de la demo utilizando las credenciales por defecto guest:guest.
+
+2. Explotación: Vulnerabilidad en MinIO
+Bypass de Restricciones (403 Forbidden)
+Durante la navegación, localizamos un endpoint protegido que devuelve un error 403. Logramos bypassear esta restricción inyectando un carácter de nueva línea (%0A) en la URL, lo que nos permite visualizar la configuración interna y descubrir un endpoint de la API de MinIO.
+
 ![[Pasted image 20240205020823.png]]
-Nos vamos al endopoint después de añadir el subdominio:
 ![[Pasted image 20240205022738.png]]
-Vemos como una especie de log de la API MinIO.
-Viendo MinIO, hay una vulnerabilidad que es la siguiente:
-https://github.com/acheiii/CVE-2023-28432/blob/main/CVE-2023-28432.py
 
-Esta vuln permite acceder a un recurso de una versión anterior de minio, permite ejecutarla si estamos en una release antigua, y nos devuelve las variables de entorno siguientes:
+Explotación de CVE-2023-28432
+Identificamos que la versión de MinIO instalada es vulnerable a la divulgación de variables de entorno (). Al explotar esta vulnerabilidad, obtenemos las claves de acceso (MINIO_ROOT_USER y MINIO_ROOT_PASSWORD).
+
 ![[Pasted image 20240205161229.png]]
-Con estas variables de entorno vamos a poder intentar listar directorios con la siguiente herramienta que hemos encontrado en github:
-https://github.com/minio/mc
 
-Lo primero que tenemos que hacer después de instalarnos la herramienta es crear un alias con el servidor de minio de skyfall.htb con las claves que hemos sacado:
+Utilizamos la herramienta de línea de comandos de MinIO (mc) para configurar un alias y conectarnos al servidor de la víctima.
+
 ![[Pasted image 20240205224442.png]]
-
-Una vez creado el alias comprobamos si la conexión se ha establecido sin errores:
 ![[Pasted image 20240205224557.png]]
-Vemos como la conexión se ha establecido.
-Vamos a listar posibles buckets:
+
+3. Movimiento Lateral: Abuso de HashiCorp Vault
+Enumeramos los buckets disponibles y localizamos un respaldo del directorio home del usuario Askyy (home_backup.tar.gz).
+
 ![[Pasted image 20240205224858.png]]
-Nos copiamos en la maquina local el archivo del bucket askyy/home_backup.tar.gz:
 ![[Pasted image 20240205225015.png]]
-Y investigamos el backup del home del usuario Askyy, nos descargamos los 3 backups, para ver que contiene cada uno.
-En uno de los 3 en el archivo oculto .bashrc encontramos lo siguiente:
+
+Extracción de Tokens de Vault
+Al analizar el archivo .bashrc del respaldo, encontramos la configuración de HashiCorp Vault, incluyendo un token de autenticación y la dirección de la API.
+
 ![[Pasted image 20240206030756.png]]
-Viendo esto del vault exploramos lo que es, parece una herramienta de autenticación con la que podemos conectarnos de manera rápida a través del CLI, con un token que parece ser este, añadiendo las variables de entorno nosotros también podemos conectarnos:
+
+Instalamos el cliente de Vault y configuramos las variables de entorno para interactuar con el servidor.
+
 ![[Pasted image 20240206134411.png]]
-
-y además debemos de añadir el nuevo subdominio al /etc/hosts.
-Nos instalamos la herramienta del siguiente enlace, en concreto el binario:
-https://developer.hashicorp.com/vault/install
 ![[Pasted image 20240206040416.png]]
-Nos conectamos y el warning que nos salta es por que no haría falta añadir la variable de entorno del token solo tenemos que añadir la de 'VAULT_API_ADDR'.
 
-**Otra manera por si no funciona la primera de conectarnos**
-![[Pasted image 20240206133947.png]]
+Generación de Credenciales SSH Temporales
+Verificamos nuestros privilegios en Vault y confirmamos que tenemos permisos para utilizar el motor de secretos SSH. Generamos una clave temporal de un solo uso (OTP) para el usuario Askyy y logramos autenticarnos vía SSH para capturar la flag user.txt.
 
-Una vez conectado con el servidor lo que vamos hacer es ver los permisos que tenemos sobre ssh:
 ![[Pasted image 20240206041209.png]]
-Nos dice que tenemos el siguiente permiso el de listar.
-Como podemos listar, listamos los permisos que tenemos con el siguiente token:
-
 ![[Pasted image 20240206041340.png]]
-
-Vemos que tenemos el permiso de conectarnos con una contraseña temporal, por lo que vamos a intentar conectarnos:
-https://developer.hashicorp.com/vault/docs/commands/ssh
 ![[Pasted image 20240206134539.png]]
-Efectivamente con la contraseña temporal nos hemos podido conectar,  y tenemos user.txt, ahora debemos de escalar privilegios, vemos que tiene el privilegio de ejecutar vault-unseal algo escrito en yaml, como root, por lo que vamos a intentar ver que podemos hacer para escalar privilegios.
-Hemos estado investigando y por lo que veo, lo que hace este comando que podemos ejecutar como sudo esta haciendo es des-sellar el vault y pasar el token nuevo como configuracion de autenticacion del admin, teniendo en cuenta que tenemos el privilegio del admin_otp_key_role, si le pasamos el token que tenemos como configuracion,  podremos conectarnos como admin, por lo que lo primero que tenemos que hacer es ejecutar el comando haber como funciona:
+
+4. Escalada de Privilegios: Secuestro de Master Token
+Enumeramos los privilegios de sudo y descubrimos que podemos ejecutar el comando vault-unseal sobre un archivo YAML como root. Este script automatiza el proceso de "des-sellado" del Vault.
+
 ![[Pasted image 20240206150332.png]]
-Nos crea un archivo debug.log el cual no podemos leer por que nos lo crea el script, con el permiso de root, por lo que vamos a borrarle y a crear nosotros uno nuevo antes de que lo cree el script:
+
+Ataque de Race Condition en Logs
+El script escribe información sensible en un archivo llamado debug.log con permisos de root, lo que impide nuestra lectura. Sin embargo, podemos pre-crear el archivo con permisos de lectura para nuestro usuario antes de que el script lo genere.
+
+Borramos el log existente (si lo hay) y creamos uno nuevo con permisos totales.
+
+Ejecutamos el script de vault-unseal.
+
+Leemos el archivo debug.log para extraer el Master Token generado durante el proceso.
+
 ![[Pasted image 20240206150508.png]]
-Como vemos ahora podemos ver el debug.log y podemos ver el master token que crea para la conexión del usuario root.
-Con este token es como nos tenemos que conectar como lo hemos hecho antes, cuando nos pida el token a la hora de autenticarnos con root, debemos de meter este master token.
+
+Con el Master Token en nuestro poder, nos autenticamos en Vault con privilegios de administrador global, generamos una credencial SSH para el usuario root y obtenemos el compromiso total de la máquina.
 
 ![[Pasted image 20240206142417.png]]
-Como vemos nos ha conectado como el usuario root, gracias al privilegio de la contraseña temporal como admin, y gracias a que hemos podido ver el master token.
-
-https://www.hackthebox.com/achievement/machine/802953/586
 ![[Pasted image 20240206142211.png]]
+
+Máquina Skyfall comprometida. 🚀
 

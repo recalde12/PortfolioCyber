@@ -8,76 +8,94 @@ description: "Resolución de la máquina Analysis de HackTheBox."
 ---
 
 --------
-Lo primero hacemos un escaneo de los puertos de la maquina:
+CozyHosting es una máquina Linux de dificultad fácil que se centra en la explotación de una exposición de información en un endpoint de Spring Boot Actuator, el secuestro de una sesión de administrador y un ataque de inyección de comandos para obtener una shell inicial. La escalada de privilegios aprovecha permisos mal configurados en el archivo sudoers sobre el binario SSH.
+
+1. Fase de Reconocimiento y Enumeración
+Iniciamos con un escaneo de puertos estándar para identificar los servicios disponibles:
+
 ![[Pasted image 20240113201549.png]]
-Detectamos la versión y servicio de los servicios que corren en la maquina:
+
+Posteriormente, realizamos un escaneo detallado para determinar versiones y servicios específicos:
+
 ![[Pasted image 20240113201730.png]]
-Vemos la versión y servicio que corren por detrás de estos puertos.
-Con el lunchpad copiamos la linea que nos devuelve ssh y nos dirá a la version de ubuntu que nos estamos enfrentando:
+
+Análisis del Banner SSH
+Utilizando herramientas de búsqueda de banners (como Launchpad), analizamos la cadena devuelta por el servicio SSH. Esto nos confirma que nos enfrentamos a una distribución Ubuntu específica, la cual podría contener vulnerabilidades conocidas en sus paquetes instalados.
+
 ![[Pasted image 20240113202014.png]]
-Nos dice que la versión tiene fallos de seguridad.
 
-Fuzzeamos la web haber si encontramos algo:
+2. Explotación Web: Secuestro de Sesión y RCE
+Realizamos un proceso de fuzzing de directorios sobre el servidor web. Tras no obtener resultados concluyentes con gobuster, cambiamos a otro fuzzer que nos permite localizar endpoints críticos de Spring Boot Actuator.
+
 ![[Pasted image 20240113202956.png]]
-
-Y no encontramos nada con gobuster sin embargo probamos con otro  fuzzer haber si obtenemos los mismos resultados:
 ![[Pasted image 20240113204719.png]]
-Vemos las siguiente ruta /actuator sessions:
+
+Identificamos la ruta /actuator/sessions, la cual expone sesiones activas de usuarios en el sistema. Localizamos al usuario kanderson junto con un token de sesión válido.
+
 ![[Pasted image 20240113204758.png]]
-Nos da un usuario que puede ser valido y además nos da como una cookie de sesión además hemos interceptado la petición con burpsuite de cuando intentamos logguearnos y si que esta arrastrando cookies:
+
+Interceptamos una petición de login con Burp Suite para verificar la estructura de las cookies y procedemos a suplantar la identidad de kanderson reemplazando nuestra cookie de sesión por la obtenida del endpoint.
+
 ![[Pasted image 20240113205048.png]]
-Vamos a probar a copiarnos estas posibles cookies del usuario kanderson, a recargar la pagina con su cookie de sesión:
 ![[Pasted image 20240113205606.png]]
-Abajo nos deja añadir un hostname y un usuario para conectarnos por ssh, esta linea se añade en:
+
+Inyección de Comandos (RCE)
+Una vez dentro del panel de administración, encontramos una funcionalidad que permite añadir un hostname y un usuario para conexiones SSH. Al interceptar esta petición, observamos que los parámetros se pasan directamente a un comando del sistema.
+
 ![[Pasted image 20240113210625.png]]
+![[Pasted image 20240113002301.png]]
 
-Vamos a interceptar las peticiones con burpsuite:
-![[Pasted image 20240114002301.png]]
+Detectamos que el sistema bloquea los espacios en el input. Sin embargo, dado que el backend utiliza bash, podemos evadir esta restricción utilizando la variable interna ${IFS} o técnicas de codificación. Confirmamos la ejecución de comandos enviando un payload que genera espacios mediante un echo hacia base64.
 
-Como vemos en la cabecera de la petición nos devuelve una especie de ayuda del comando 'ssh', por lo que podemos llegar a pensar que tenemos un RCE.
-Lo primero que vamos a hacer es ver si tenemos posibilidad de ejecutar comandos:
 ![[Pasted image 20240114005725.png]]
-Nos dice que no puede tener espacios, como por detrás esta corriendo una bash vamos a probar a quitar los espacios o remplazarlos a través de un echo:
 ![[Pasted image 20240114005900.png]]
- Vemos como nos ejecuta el comando, y nos mete los espacios.
- ![[Pasted image 20240114010443.png]]
- Hemos pasado a base64 el comando whoami.
- Ahora vamos a crear el siguiente payload:
- ![[Pasted image 20240114010731.png]]
- Lo hemos probado y no funciona ya que no muestra la salida del comando.
- Asi que vamos a ver si al menos lo ejecuta y  nos mandamos una reverse shell, pasamos el one liner a base64:
- ![[Pasted image 20240114012230.png]]
-Lo metemos en el payload:
+![[Pasted image 20240114010443.png]]
+
+Finalmente, preparamos un one-liner de reverse shell, lo codificamos en Base64 para evitar problemas de sintaxis y lo inyectamos en el payload:
+
+![[Pasted image 20240114010731.png]]
+![[Pasted image 20240114012230.png]]
 ![[Pasted image 20240114012325.png]]
-Nos ponemos en escucha y mandamos el payload:
+
+Establecemos el listener y recibimos la conexión:
 ![[Pasted image 20240114012700.png]]
-Y nos da la reverse shell:
 ![[Pasted image 20240114012721.png]]
-Hacemos el tratamiento de la tty y vemos que estamos conectados pero tenemos que pivotar al usuario josh ya que no tenemos permisos para listar este:
+
+3. Movimiento Lateral: Análisis de Base de Datos
+Tras estabilizar la TTY, enumeramos el sistema y localizamos el directorio /app, que contiene los archivos de la aplicación Java. Transferimos los archivos a nuestra máquina local para realizar ingeniería inversa con jd-gui.
+
 ![[Pasted image 20240114013749.png]]
-Asi que vamos a ver en /app el archivo que hay:
 ![[Pasted image 20240114020154.png]]
-Para leerlo nos hemos instalado jd-gui en nuestra maquina windows real,  desde  la pagina oficial de jd-gui: https://java-decompiler.github.io/
-Visualizamos un usuario y una contraseña de una base de datos postgres:
+
+Al analizar el código descompilado, localizamos las credenciales de una base de datos PostgreSQL.
+
 ![[Pasted image 20240114045437.png]]
 
-Nos probamos a conectar:
+Accedemos a la base de datos y consultamos la tabla de usuarios, donde encontramos los hashes de kanderson y del admin.
+
 ![[Pasted image 20240114050555.png]]
-Nos conectamos y vemos la tabla de usuarios:
-![[Pasted image 20240114051243.png]]Vemos el hash de dos usuarios del usario kanderson y el del admin, nos quedamos con el hash del admin, y con jhon tratamos de crakearla:
+![[Pasted image 20240114051243.png]]
+
+Utilizamos John the Ripper para crackear el hash del administrador, obteniendo la contraseña: manchesterunited.
+
 ![[Pasted image 20240114052111.png]]
 ![[Pasted image 20240114052054.png]]
-Nos conectamos via ssh al usario josh que vemos que esta en el /etc/passwd:
+
+Validamos que el usuario josh existe en el sistema y procedemos a autenticarnos vía SSH:
 ![[Pasted image 20240114052213.png]]
-```bash
-	ssh josh@cozyhosting.htb
-```
-contraseña manchesterunited, y una vez conectados revisamos algunas cosas haber de que manera podemos escalar privilegios:
+
+4. Escalada de Privilegios
+Una vez logueados como josh, ejecutamos sudo -l para verificar los privilegios asignados. Observamos que el usuario puede ejecutar el binario /usr/bin/ssh como root sin proporcionar contraseña.
+
 ![[Pasted image 20240114053434.png]]
-Vemos como en a nivel de sudoers tenemos el privilegio de usar ssh como root.
-En gtfobins nos dan una forma de escalar privilegios si tenemos permiso para ejecutar ssh con sudo:
+
+Consultamos GTFOBins para encontrar una técnica de escape. Al utilizar el parámetro -o ProxyCommand, podemos forzar a SSH a ejecutar un comando (en este caso, /bin/sh) antes de establecer la conexión, heredando los privilegios de sudo.
+
 ![[Pasted image 20240114053917.png]]
-Lo ejecutamos:
 ![[Pasted image 20240114053940.png]]
-Y ya estariamos como root.
+
+¡Logramos acceso total como root!
+
 ![[Pasted image 20240114054242.png]]
+
+Máquina comprometida. 🚀

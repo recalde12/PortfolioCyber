@@ -9,62 +9,62 @@ description: "Resolución de la máquina Analysis de HackTheBox."
 #windows #Medium 
 
 ----------
-Lo primero que hacemos es hacer un escaneo de la maquina y sus puertos:
+Jab es una máquina que pone a prueba la capacidad de enumerar protocolos menos comunes como XMPP. La intrusión se logra mediante un ataque de AS-REP Roasting, seguido de movimiento lateral a través de la inspección de chats internos. La escalada final se realiza mediante el abuso de una consola de administración mal configurada y la subida de un plugin malicioso (RCE).
+
+1. Fase de Reconocimiento y Enumeración
+Iniciamos con un escaneo exhaustivo de puertos para identificar los servicios activos:
+
 ![[Pasted image 20240226112955.png]]
 ![[Pasted image 20240226113131.png]]
-Vemos un servidor xmpp, de openfire, este es un protocolo de mensajeria instantánea
-![[Pasted image 20240226113421.png]]Vemos que tenemos esto montado por detrás, he probado a hacer fuzz de directorios, en la pagina que nos muestran en el puerto 7070 que nos redirige a una pagina oficial de xmpp para ver como funciona y demás, vemos que nos podemos conectar y hacer uso del server con una aplicación que se llama pidgin https://pidgin.im/help/protocols/xmpp/, una vez instaldado podemos crearnos una cuenta, y conectarla al servidor xmpp de jab.htb:
+
+Identificamos un servidor XMPP (Openfire). Este protocolo se utiliza para mensajería instantánea. Para interactuar con el servidor, configuramos un cliente como Pidgin, lo que nos permite conectarnos al dominio jab.htb y registrar una cuenta de usuario básica.
+
+![[Pasted image 20240226113421.png]]
 ![[Pasted image 20240226125937.png]]
-Una vez conectado al server podemos ver los usuarios que hay registrados en el dominio jab.htb:
+
+Una vez conectados, logramos listar todos los usuarios registrados en el servidor, lo cual nos proporciona una lista de objetivos potenciales para ataques de Directorio Activo.
+
 ![[Pasted image 20240226130049.png]]
-Además una vez conectados, podemos ver dos buddies a los que se nos debe de añadir automáticamente:
-![[Pasted image 20240226130739.png]]
-Vemos un mensaje que parece ser una imagen, no creo que nos valga de mucho.
-Pero como tenemos una lista de usuarios validos vamos a tirar del siguiente exploit en python para ver si podemos sacar algún hash de algún usuario:
-https://github.com/fortra/impacket/blob/master/examples/GetNPUsers.py
-Lo primero que hacemos es crear un diccionario con todos los usuarios validos:
+
+2. Explotación: AS-REP Roasting y Movimiento Lateral
+Con la lista de usuarios obtenida, procedemos a realizar un ataque de AS-REP Roasting utilizando la herramienta GetNPUsers.py de la suite Impacket. Este ataque busca usuarios que no requieren pre-autenticación Kerberos para obtener sus hashes de contraseña.
+
 ![[Pasted image 20240226140229.png]]
-Una vez hecho esto nos clonamos el script anterior, y lo ejecutamos con este diccionario de usuarios validos:
 ![[Pasted image 20240226140312.png]]
-Nos saca un hash del usuario jmontgomery, vamos a intentar crackearlo con john:
+
+Logramos obtener el hash del usuario jmontgomery y lo crackeamos exitosamente con John the Ripper.
+
 ![[Pasted image 20240226144119.png]]
-Hemos sacado la contraseña del usuario jmontgomery, por lo que vamos a intentar logguearnos, en el pidgin de momento, y nos deja dentro de este usuario vemos que hay una sala de chat que se llama pentest2023:
+
+Acceso a Salas de Chat
+Al loguearnos en Pidgin con las nuevas credenciales, accedemos a la sala de chat pentest2023, donde encontramos credenciales de texto plano para el usuario de servicio svc_openfire.
+
 ![[Pasted image 20240226161336.png]]
-En esta podemos ver la contraseña de otro usuario:
 ![[Pasted image 20240226161419.png]]
-Con este usuario y esta contraseña vemos que podemos, hacer muchas mas cosas:
-![[Pasted image 20240226164208.png]]
-Por lo que vamos a tratar de ganar una shell del algún modo con este usuario.
-Para ganar una shell teniendo la contraseña de este usuario podemos utilizar el siguiente comando de la suite de impacket:
-![[Pasted image 20240226203206.png]]Con este comando podemos con un usuario y credenciales validas ejecutar un comando en la maquina, por lo que nos vamos a enviar una reverse shell utilizando la del siguiente recurso de github:
-https://github.com/samratashok/nishang/tree/master/Shells
-Nos ponemos en escucha por el puerto 9001, compartiendo el script que nos va a invocar la reverse shell por el puerto que le indiquemos:
+
+3. Intrusión: Shell mediante Impacket
+Utilizamos las credenciales de svc_openfire para ejecutar comandos en el sistema mediante psexec.py o wmiexec.py. Para obtener una shell interactiva más estable, cargamos un script de PowerShell (Nishang) configurando un servidor HTTP local y ejecutando una reverse shell hacia nuestra máquina atacante.
+
+![[Pasted image 20240226203206.png]]
 ![[Pasted image 20240226203406.png]]
-Añadimos al final del reverse.ps1 la linea donde invocamos la shell en el puerto en el que vamos a estar en escucha:
-![[Pasted image 20240226203526.png]]
-Y cuando ejecutemos el comando de impacket nos llegara la shell:
 ![[Pasted image 20240226203605.png]]
-Ahora lo que vamos a estar haciendo para escalar privilegios es con chisel compartirnos el puerto 9090 haciendo un portforwarding, con esto lo que vamos a conseguir es tener acceso a la consola de administracion de Openfire:
+
+4. Escalada de Privilegios: Openfire Admin Console (RCE)
+Con acceso al sistema, realizamos un Local Port Forwarding utilizando Chisel para traer el puerto interno 9090 (Consola de Administración de Openfire) a nuestra máquina local.
+
 ![[Pasted image 20240227171847.png]]
-![[Pasted image 20240227171902.png]]
-Ahora cuando accedemos al puerto 9090 de nuestra maquina en realidad es el puerto de la maquina victima:
 ![[Pasted image 20240227171938.png]]
-Tenemos un usuario valido para este panel que es el usuario svc_openfire con su contraseña.
-Y una vez conectados podemos explotar la segunda parte de esta vuln que es la subida de un plugin malicioso [https://vulncheck.com/blog/openfire-cve-2023-32315](https://vulncheck.com/blog/openfire-cve-2023-32315 "https://vulncheck.com/blog/openfire-cve-2023-32315
-(https://vulncheck.com/blog/openfire-cve-2023-32315)").
-Por lo que subimos el plugin:
+
+Explotación de Plugins (CVE-2023-32315)
+Accedemos al panel con las credenciales de svc_openfire. Explotamos la capacidad de subir plugins personalizados para cargar un archivo .jar malicioso que nos permite la ejecución de comandos con privilegios de sistema.
+
 ![[Pasted image 20240227222313.png]]
-Una vez subido el plugin, lo que vamos hacer es utilizarlo para ganar una shell:
+
+Finalmente, ejecutamos un comando de reverse shell a través del plugin instalado y obtenemos acceso total como Administrator.
 
 ![[Pasted image 20240227224627.png]]
-![[Pasted image 20240227224646.png]]
-La contraseña para esta consola es 123, lo hemos sacado de un archivo .jar que hay en la maquina.
-Nos conectamos a la shell, y nos intentaremos mandar una reverse shell.
-Pegamos la reverse en el comando a ejecutar:
-![[Pasted image 20240228161655.png]]
-
-![[Pasted image 20240228161707.png]]
-Nos ponemos en escucha por el puerto indicado:
 ![[Pasted image 20240228161752.png]]
-https://www.hackthebox.com/achievement/machine/802953/589
+
 ![[Pasted image 20240228161848.png]]
+
+Máquina Jab comprometida. 🚀
